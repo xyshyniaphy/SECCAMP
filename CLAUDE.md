@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SECCAMP is a batch automation system that searches and analyzes private campsite-suitable land from Japanese real estate websites. The system runs daily at 06:00 JST via GitHub Actions, scrapes 7 major Japanese real estate sites, scores properties using AI analysis (100-point scale), and publishes results as a static Hugo website via GitHub Pages.
 
-**Current Status:** Specification only. No implementation exists yet. The README.md (in Japanese) contains the complete technical specification for building this system from scratch.
+**Current Status:** Infrastructure implemented, working on site-specific scrapers. The data layer (database, caching, rate limiting) is complete.
 
 ## Architecture
 
@@ -17,34 +17,36 @@ SECCAMP is a batch automation system that searches and analyzes private campsite
 - **Database:** SQLite 3.40+ with real-time rate limiting
 - **Static Site Generator:** Hugo Extended 0.120+
 - **Template Engine:** Jinja2 3.1+
+- **ORM:** SQLAlchemy 2.0+
 
 ### System Flow
 ```
-1. Scrape (Rate Limited) → 2. Analyze & Score → 3. Generate Markdown → 4. Hugo Build → 5. Git Push
+1. Check Cache → 2. Check Rate Limit → 3. Scrape → 4. Cache Results → 5. Parse & Save to DB
 ```
 
-### Planned Directory Structure
+### Project Structure
 ```
 seccamp/
 ├── app/
 │   ├── main.py              # Entry point with CLI args (--mode scrape/full)
-│   ├── config.py            # Configuration loading
+│   ├── config.py            # Configuration loading from environment
 │   ├── scrapers/            # Web scraping modules
-│   │   ├── base_scraper.py  # Abstract base class
+│   │   ├── base_scraper.py  # Abstract base class with cache/rate limit
+│   │   ├── cache_manager.py # Page-level caching with TTL
 │   │   ├── rate_limiter.py  # SQLite-based rate limiting
-│   │   └── *_scraper.py     # Site-specific scrapers
-│   ├── database/            # SQLAlchemy models + operations
-│   ├── analyzers/           # AI scoring engine (6 criteria, 100 points max)
-│   ├── blog_generator/      # Jinja2 templates + daily post generation
-│   └── utils/               # Logger, GitPusher
+│   │   └── url_normalizer.py # URL normalization for cache keys
+│   ├── database/            # SQLAlchemy models + DatabaseManager
+│   │   ├── models.py        # All 10 ORM models
+│   │   └── operations.py    # DatabaseManager with CRUD operations
+│   ├── analyzers/           # AI scoring engine (6 criteria, 100 points max) [PENDING]
+│   ├── blog_generator/      # Jinja2 templates + daily post generation [PENDING]
+│   └── utils/               # Logger, GitPusher [PENDING]
 ├── data/                    # Volume-mapped directory
-│   ├── seccamp.db
-│   ├── logs/
-│   └── hugo_site/
-│       ├── content/posts/   # Daily markdown files (YYYY-MM-DD.md)
-│       └── public/          # Built Hugo site
+│   ├── seccamp.db           # SQLite database (auto-initialized)
+│   ├── logs/                # Daily log files
+│   └── hugo_site/           # Hugo site [PENDING]
 └── .github/workflows/
-    └── daily-batch.yml      # Scheduled at 06:00 JST
+    └── daily-batch.yml      # Scheduled at 06:00 JST [PENDING]
 ```
 
 ## Development Commands
@@ -84,36 +86,99 @@ sqlite3 data/seccamp.db "SELECT * FROM scraping_logs ORDER BY started_at DESC LI
 
 ## Key Components
 
-### Rate Limiting System
-SQLite-based real-time rate limiting. Each site has configurable `max_requests` per `period_seconds`. The system tracks all requests in `rate_limit_tracker` table and automatically waits when limits are reached.
+### DatabaseManager (`app/database/operations.py`)
 
-**Target sites:** athome (60/5min), suumo (30/5min), ieichiba (20/5min), zero.estate (10/5min), jmty (20/5min)
+Central database operations class. Usage:
 
-### AI Scoring (100 points total)
-| Criteria | Points | Key Thresholds |
-|----------|--------|----------------|
-| Area | 0-25 | Ideal: 5000m²+, Min: 1000m² |
-| Neighbor consideration | 0-20 | ★★★ 500m+ recommended for generator use |
-| Road suitability | 0-20 | ★★★ 4.5m+ for camping car access |
-| Convenience | 0-15 | Nearby convenience store |
-| Scenery | 0-10 | Subjective assessment |
-| Access | 0-10 | Nearby station |
+```python
+from database import DatabaseManager
 
-### Search Criteria Priority
-- **Area:** 1,000㎡ minimum (★★★)
-- **Road width:** 4.5m+ for camping cars (★★★)
-- **Population density:** 50 people/km² or less (★★★)
-- **Nearest house:** 500m+ recommended for generator use (★★★)
-- **Region:** Kanto and Chubu prioritized (★★)
-- **Price:** 30 million yen or less (★★)
+db = DatabaseManager(config.db_path)
+
+# Property operations
+property_id = db.upsert_property(session, {
+    "source_site": "athome",
+    "source_property_id": "12345",
+    "location_pref": "長野県",
+    "location_city": "茅野市",
+    "area_sqm": 5000,
+    # ... other fields
+})
+
+# AI scoring
+db.save_ai_score(session, property_id, {
+    "area_score": 25.0,
+    "neighbor_score": 20.0,
+    # ... other scores
+    "total_score": 85.0
+})
+
+# Top properties
+top_props = db.get_top_properties(session, limit=50)
+
+# Cache cleanup
+result = db.cleanup_expired_cache()
+```
+
+### BaseScraper (`app/scrapers/base_scraper.py`)
+
+Abstract base class for all scrapers. Subclasses implement `_scrape_implementation()`:
+
+```python
+from scrapers import BaseScraper
+
+class AtHomeScraper(BaseScraper):
+    def _scrape_implementation(self) -> List[Dict]:
+        # Use safe_get_with_cache for automatic caching
+        html = self.safe_get_with_cache(
+            "https://example.com/list",
+            page_type="list"
+        )
+
+        # Parse and return properties
+        return [...]
+```
+
+The base class provides:
+- `safe_get_with_cache(url, page_type)` - Get HTML with caching
+- `rate_limiter` - Automatic rate limiting
+- `cache_manager` - Page caching with TTL
+
+### CacheManager (`app/scrapers/cache_manager.py`)
+
+Page-level caching with TTL:
+- List pages: 6 hours
+- Detail pages: 7 days
+- Images: 30 days
+
+Features:
+- SHA256 URL hashing for O(1) lookup
+- Content deduplication
+- Automatic compression (>10KB)
+- Daily statistics tracking
+
+### RateLimiter (`app/scrapers/rate_limiter.py`)
+
+Per-site rate limiting with automatic waiting:
+
+| Site | Max Requests | Period |
+|------|--------------|--------|
+| athome | 60 | 5 min |
+| suumo | 30 | 5 min |
+| ieichiba | 20 | 5 min |
+| zero_estate | 10 | 5 min |
+| jmty | 20 | 5 min |
 
 ## Database Schema
 
 Key tables:
 - `rate_limits` - Rate limit config per site
 - `rate_limit_tracker` - Request history for rate limit calculation
+- `cache_entries` - URL index for cache (with SHA256 hash)
+- `scraped_pages_cache` - Cached HTML content (compressed)
 - `properties` - Master property data with `campsite_score`
 - `ai_scores` - Detailed breakdown of 6 scoring criteria
+- `scraping_logs` - Scraping session logs with cache stats
 - `daily_blogs` - Blog post metadata
 
 ## Environment Variables
@@ -130,16 +195,30 @@ HUGO_BASE_URL=https://username.github.io/seccamp/
 
 ## Important Implementation Notes
 
-1. **Chrome/ChromeDriver Version Matching:** The Dockerfile installs Chrome and then downloads the matching ChromeDriver version dynamically. If scraping fails, rebuild with `--no-cache`.
+1. **Database Auto-Initialization**: The database is automatically initialized from `app/init_database_complete.sql` on first run. The check looks for the `rate_limits` table existence.
 
-2. **Rate Limit Respect:** The system MUST respect rate limits. Use `rate_limiter.wait_if_needed(site_name)` before every request.
+2. **Chrome/ChromeDriver**: Uses Chrome for Testing API to download matching ChromeDriver version.
 
-3. **Idempotency:** Properties use `UNIQUE(source_site, source_property_id)` to avoid duplicates.
+3. **Rate Limit Respect**: All scrapers MUST use `safe_get_with_cache()` which handles both caching and rate limiting automatically.
 
-4. **Markdown Front Matter:** Daily posts require Hugo front matter with title, date (T06:00:00+09:00 format), and tags.
+4. **Idempotency**: Properties use `UNIQUE(source_site, source_property_id)` to avoid duplicates.
 
-5. **Git Operations:** Only commit/push `public/` and `content/posts/` directories. Use the non-container user for proper permissions.
+5. **Cache TTL**: Choose appropriate page_type when calling `safe_get_with_cache()`:
+   - `"list"` for listing pages (6h TTL)
+   - `"detail"` for property pages (7d TTL)
+   - `"image"` for images (30d TTL)
+
+6. **Dev Mode**: Use `docker-compose.dev.yml` for development - source files are mounted so changes apply instantly without rebuilding.
+
+7. **Git Operations:** Only commit/push `public/` and `content/posts/` directories.
 
 ## Japanese Context
 
 This project targets Japanese real estate sites. The specification is written in Japanese. Key search terms and site structures are Japan-specific.
+
+Target sites:
+- AtHome (athome.co.jp)
+- SUUMO (suumo.jp)
+- Ieichiba (ieichiba.com)
+- Zero Estate (zero.estate)
+- JMty (jmty.jp)
