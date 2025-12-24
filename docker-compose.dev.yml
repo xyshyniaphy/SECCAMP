@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  seccamp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: seccamp-dev
+    volumes:
+      - ./data:/data
+      - ./app:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_REPO=${GITHUB_REPO}
+    env_file:
+      - .env
+    restart: "no"
+    networks:
+      - seccamp-network
+    command: ["python", "main.py"]
+
+networks:
+  seccamp-network:
+    driver: bridge

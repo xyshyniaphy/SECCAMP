@@ -51,20 +51,25 @@ seccamp/
 
 ```bash
 # Build Docker image
-docker-compose build
+docker compose build
+./build.sh
 
-# Run full batch (scrape → analyze → generate → build → push)
-docker-compose up
+# Production run (uses built image)
+docker compose run --rm seccamp --mode scrape
+docker compose run --rm seccamp --mode full
+./run_scrape.sh
+./run_full.sh
 
-# Run specific mode only
-docker-compose run --rm seccamp --mode scrape
-docker-compose run --rm seccamp --mode full
+# Development run (mounts app/ for hot-reload, no rebuild needed)
+./run_dev.sh scrape
+./run_dev.sh full
+docker compose -f docker-compose.dev.yml run --rm seccamp --mode full
 
 # Debug shell inside container
-docker-compose run --rm --entrypoint /bin/bash seccamp
+docker compose run --rm --entrypoint /bin/bash seccamp
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # View daily log file
 tail -f data/logs/seccamp-$(date +%Y-%m-%d).log
@@ -72,6 +77,10 @@ tail -f data/logs/seccamp-$(date +%Y-%m-%d).log
 # Check database
 sqlite3 data/seccamp.db "SELECT * FROM scraping_logs ORDER BY started_at DESC LIMIT 10"
 ```
+
+**Dev vs Production:**
+- **Production** (`docker-compose.yml`): Uses built image, requires rebuild after code changes
+- **Dev** (`docker-compose.dev.yml`): Mounts `app/` directory, changes apply instantly without rebuild
 
 ## Key Components
 
