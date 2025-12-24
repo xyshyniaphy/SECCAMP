@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Any
 class SiteConfig:
     """Load and access site configuration from sites.json."""
 
-    def __init__(self, config_path: str | Path = "app/config/sites.json"):
+    def __init__(self, config_path: str | Path = "sites/sites.json"):
         self.config_path = Path(config_path)
         self.sites: Dict[str, Dict[str, Any]] = self._load_config()
 

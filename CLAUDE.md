@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SECCAMP is a batch automation system that searches and analyzes private campsite-suitable land from Japanese real estate websites. The system runs daily at 06:00 JST via GitHub Actions, scrapes 7 major Japanese real estate sites, scores properties using AI analysis (100-point scale), and publishes results as a static Hugo website via GitHub Pages.
 
-**Current Status:** Infrastructure implemented, working on site-specific scrapers. The data layer (database, caching, rate limiting) is complete.
+**Current Status:** Infrastructure implemented, AthomeScraper in active development (scrape-only for debugging). The data layer (database, caching, rate limiting) is complete.
 
 ## Architecture
 
@@ -30,8 +30,12 @@ seccamp/
 ├── app/
 │   ├── main.py              # Entry point with CLI args (--mode scrape/full)
 │   ├── config.py            # Configuration loading from environment
+│   ├── config/              # Site configuration
+│   │   ├── site_config.py   # SiteConfig loader
+│   │   └── sites.json       # Site URLs, selectors, rate limits
 │   ├── scrapers/            # Web scraping modules
 │   │   ├── base_scraper.py  # Abstract base class with cache/rate limit
+│   │   ├── athome_scraper.py # AtHome.co.jp scraper (scrape-only for debugging)
 │   │   ├── cache_manager.py # Page-level caching with TTL
 │   │   ├── rate_limiter.py  # SQLite-based rate limiting
 │   │   └── url_normalizer.py # URL normalization for cache keys
@@ -44,7 +48,9 @@ seccamp/
 ├── data/                    # Volume-mapped directory
 │   ├── seccamp.db           # SQLite database (auto-initialized)
 │   ├── logs/                # Daily log files
+│   ├── debug/               # Scraped HTML for debugging (by date)
 │   └── hugo_site/           # Hugo site [PENDING]
+├── refer/                   # Reference documentation and configs
 └── .github/workflows/
     └── daily-batch.yml      # Scheduled at 06:00 JST [PENDING]
 ```
@@ -75,6 +81,10 @@ docker compose logs -f
 
 # View daily log file
 tail -f data/logs/seccamp-$(date +%Y-%m-%d).log
+
+# Inspect scraped HTML (for debugging)
+ls -la data/debug/$(date +%Y-%m-%d)/
+# Contains: athome_list.html, athome_detail_*.html
 
 # Check database
 sqlite3 data/seccamp.db "SELECT * FROM scraping_logs ORDER BY started_at DESC LIMIT 10"
@@ -144,6 +154,56 @@ The base class provides:
 - `rate_limiter` - Automatic rate limiting
 - `cache_manager` - Page caching with TTL
 
+### AthomeScraper (`app/scrapers/athome_scraper.py`)
+
+**Current Status:** Scrape-only for debugging (no parsing logic yet)
+
+Scrapes AtHome.co.jp and saves raw HTML for inspection:
+- Scrapes list page for property URLs
+- Scrapes detail pages (limited by `MAX_DETAIL_PAGES`)
+- Saves HTML to `data/debug/{YYYY-MM-DD}/`
+- Returns dict with raw HTML (not parsed data)
+
+Usage:
+```python
+from scrapers import AthomeScraper
+
+scraper = AthomeScraper(
+    db_path=config.db_path,
+    max_detail_pages=config.max_detail_pages,
+)
+result = scraper.scrape()
+# result = {
+#     "prefecture": "nagano",
+#     "list_url": "...",
+#     "list_html": "...",
+#     "property_urls": ["url1", "url2", ...],
+#     "detail_pages": {"url1": "<html>...", ...}
+# }
+```
+
+### SiteConfig (`app/config/site_config.py`)
+
+Loads site configuration from `app/config/sites.json`:
+
+```python
+from config.site_config import SiteConfig
+
+site_config = SiteConfig()
+athome = site_config.get_site("athome")
+entry_urls = site_config.get_entry_urls("athome")
+selectors = site_config.get_selectors("athome", "detail_page")
+rate_limit = site_config.get_rate_limit("athome")
+```
+
+Configuration in `sites.json`:
+- `site_name`, `display_name`, `base_url`
+- `enabled` - enable/disable scraper
+- `rate_limit` - max_requests, period_seconds
+- `entry_urls` - per-prefecture list page URLs
+- `selectors` - CSS selectors for list/detail pages
+- `pagination` - pagination settings
+
 ### CacheManager (`app/scrapers/cache_manager.py`)
 
 Page-level caching with TTL:
@@ -191,6 +251,9 @@ GITHUB_REPO=username/seccamp
 GITHUB_USER=Your Name
 GITHUB_EMAIL=your@email.com
 HUGO_BASE_URL=https://username.github.io/seccamp/
+
+# Scraping limits (for debugging)
+MAX_DETAIL_PAGES=1  # Limit detail pages scraped per run
 ```
 
 ## Important Implementation Notes
@@ -212,13 +275,29 @@ HUGO_BASE_URL=https://username.github.io/seccamp/
 
 7. **Git Operations:** Only commit/push `public/` and `content/posts/` directories.
 
+8. **Debug Output**: When `MAX_DETAIL_PAGES` is set, scraped HTML is saved to `data/debug/{YYYY-MM-DD}/` for inspection. Use this to understand HTML structure before implementing parsing.
+
 ## Japanese Context
 
 This project targets Japanese real estate sites. The specification is written in Japanese. Key search terms and site structures are Japan-specific.
 
 Target sites:
-- AtHome (athome.co.jp)
+- AtHome (athome.co.jp) - 18 prefectures configured
 - SUUMO (suumo.jp)
 - Ieichiba (ieichiba.com)
 - Zero Estate (zero.estate)
 - JMty (jmty.jp)
+
+### AtHome.co.jp Details
+
+**URL Patterns:**
+- List: `https://www.athome.co.jp/kodate/chuko/{pref}/list/?pref={code}&basic=...`
+- Detail: `https://www.athome.co.jp/kodate/{bukken_no}/?DOWN=1&...`
+
+**Configured Prefectures:**
+hokkaido, aomori, iwate, miyagi, akita, yamagata, fukushima, ibaraki, tochigi, gunma, saitama, chiba, tokyo, kanagawa, niigata, yamanashi, nagano, shizuoka
+
+**Search Criteria (encoded in URL):**
+- 土地面積1000㎡以上 (1000m²+ land area)
+- 価格3000万円以下 (≤30M JPY)
+- 平屋・2階建て (1-2 story buildings)

@@ -25,10 +25,12 @@ A batch automation system that searches and analyzes private campsite-suitable l
 - Base scraper class with Selenium integration
 - Database ORM with SQLAlchemy models
 - Development mode with hot-reload (`./run_dev.sh`)
+- **AthomeScraper** - Scrape-only for debugging (saves HTML for inspection)
 
 ### Pending 🚧
 
-- Site-specific scrapers (athome, suumo, ieichiba, etc.)
+- AthomeScraper parsing logic implementation
+- Additional site scrapers (suumo, ieichiba, etc.)
 - AI scoring engine implementation
 - Blog generation with Jinja2 templates
 - Hugo site building
@@ -57,19 +59,25 @@ A batch automation system that searches and analyzes private campsite-suitable l
 seccamp/
 ├── app/
 │   ├── main.py              # Entry point
-│   ├── config.py            # Configuration
+│   ├── config.py            # Configuration from environment
+│   ├── config/              # Site configuration
+│   │   ├── site_config.py   # SiteConfig loader
+│   │   └── sites.json       # Site URLs, selectors, rate limits
 │   ├── database/            # Database layer
 │   │   ├── models.py        # SQLAlchemy models
 │   │   └── operations.py    # DatabaseManager
 │   └── scrapers/            # Web scraping
 │       ├── base_scraper.py  # Abstract base class
+│       ├── athome_scraper.py # AtHome scraper (scrape-only for debugging)
 │       ├── cache_manager.py # Page caching
 │       ├── rate_limiter.py  # Rate limiting
 │       └── url_normalizer.py # URL normalization
 ├── data/                    # Volume mapped
 │   ├── seccamp.db           # SQLite database
 │   ├── logs/                # Log files
+│   ├── debug/               # Scraped HTML for debugging
 │   └── hugo_site/           # Hugo site
+├── refer/                   # Reference documentation
 ├── Dockerfile               # Multi-stage build with uv
 ├── docker-compose.yml       # Production
 ├── docker-compose.dev.yml   # Development (hot-reload)
@@ -113,6 +121,9 @@ GITHUB_REPO=username/seccamp
 GITHUB_USER=Your Name
 GITHUB_EMAIL=your@email.com
 HUGO_BASE_URL=https://username.github.io/seccamp/
+
+# Scraping limits (for debugging)
+MAX_DETAIL_PAGES=1  # Limit detail pages scraped per run
 ```
 
 ### Dev vs Production
@@ -121,6 +132,21 @@ HUGO_BASE_URL=https://username.github.io/seccamp/
 |------|--------------|-------------|---------|
 | Production | `docker-compose.yml` | Built into image | Required after changes |
 | Dev | `docker-compose.dev.yml` | Mounted `./app` | Not needed |
+
+### Debugging Scrapers
+
+When `MAX_DETAIL_PAGES` is set, scraped HTML is saved for inspection:
+
+```bash
+# Run scraper
+./run_dev.sh scrape
+
+# Inspect output
+ls -la data/debug/$(date +%Y-%m-%d)/
+# Contains: athome_list.html, athome_detail_*.html
+```
+
+Use the saved HTML to understand the structure before implementing parsing logic.
 
 ## Database Schema
 
@@ -153,7 +179,7 @@ Apache License 2.0 - see [LICENSE](LICENSE) for details.
 
 日本の不動産サイトからプライベートキャンプ場に適した土地を自動検索・分析するバッチシステム。
 
-**版:** 4.0 (Implementation Progress)
+**版:** 5.0 (AthomeScraper in Development)
 **作成日:** 2025年12月24日
 **最終更新:** 2025年12月24日
 
@@ -168,10 +194,12 @@ Apache License 2.0 - see [LICENSE](LICENSE) for details.
 - BaseScraperクラス (Selenium統合)
 - DatabaseManager (SQLAlchemy ORM)
 - 開発モード (ホットリロード)
+- **AthomeScraper** - スクレイピング実装中（デバッグ用HTML保存）
 
 ### 未実装 🚧
 
-- サイト別スクレイパー実装
+- AthomeScraper パースロジック
+- 他サイトスクレイパー (suumo, ieichiba等)
 - AIスコアリングエンジン
 - ブログ生成 (Jinja2)
 - Hugoサイトビルド

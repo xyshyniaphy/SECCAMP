@@ -35,13 +35,13 @@ class AthomeScraper(BaseScraper):
         from pathlib import Path
         # Add app directory to path for imports
         sys.path.insert(0, str(Path(__file__).parent.parent))
-        from config.site_config import SiteConfig
+        from sites.site_config import SiteConfig
 
         site_config = SiteConfig()
         athome_config = site_config.get_site("athome")
 
         if not athome_config:
-            raise ValueError("Athome site configuration not found in config/sites.json")
+            raise ValueError("Athome site configuration not found in sites/sites.json")
 
         base_url = athome_config["base_url"]
         super().__init__(
