@@ -154,6 +154,19 @@ The base class provides:
 - `rate_limiter` - Automatic rate limiting
 - `cache_manager` - Page caching with TTL
 
+### Database Concurrency
+
+**Important:** The system uses SQLite with WAL (Write-Ahead Logging) mode for concurrent access:
+
+- DatabaseManager enables WAL mode on initialization (before any sessions)
+- CacheManager and RateLimiter use raw sqlite3 with 30s timeout
+- SQLAlchemy sessions (via DatabaseManager) coexist with raw connections
+
+**If you get "database is locked" errors:**
+1. Ensure only one DatabaseManager instance exists per process
+2. Close sessions when done (`session.close()`)
+3. WAL mode should be enabled automatically - check logs for "WAL mode enabled"
+
 ### AthomeScraper (`app/scrapers/athome_scraper.py`)
 
 **Current Status:** Scrape-only for debugging (no parsing logic yet)

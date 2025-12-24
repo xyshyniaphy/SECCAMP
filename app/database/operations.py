@@ -25,6 +25,7 @@ class DatabaseManager:
 
     def __init__(self, db_path: Path):
         self.db_path = db_path
+        self._enable_wal_mode()  # Enable WAL before creating engine
         self.engine = create_engine(
             f"sqlite:///{db_path}",
             connect_args={"check_same_thread": False},
@@ -33,6 +34,17 @@ class DatabaseManager:
         )
         self.SessionLocal = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
         self._ensure_initialized()
+
+    def _enable_wal_mode(self) -> None:
+        """Enable WAL mode for better concurrent access."""
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=30000")
+                logger.info("WAL mode enabled for database")
+        except sqlite3.OperationalError as e:
+            logger.warning(f"Could not enable WAL mode: {e}")
 
     def _ensure_initialized(self) -> None:
         """Ensure database schema is initialized."""

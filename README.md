@@ -102,6 +102,8 @@ seccamp/
                  [Parse & Save to DB]
 ```
 
+**Database Concurrency:** SQLite with WAL mode enabled for concurrent read/write access between SQLAlchemy sessions and raw connections (CacheManager, RateLimiter).
+
 ## Development
 
 ### Requirements
@@ -168,6 +170,8 @@ Use the saved HTML to understand the structure before implementing parsing logic
 - **List pages**: 6 hours
 - **Detail pages**: 7 days
 - **Images**: 30 days
+
+**Note:** Database uses WAL mode for concurrent access - DatabaseManager, CacheManager, and RateLimiter can operate simultaneously without lock issues.
 
 ## License
 

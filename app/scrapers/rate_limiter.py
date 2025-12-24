@@ -9,6 +9,9 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+# SQLite connection timeout (seconds)
+SQLITE_TIMEOUT = 30.0
+
 
 class RateLimiter:
     """Rate limiter using SQLite for tracking requests."""
@@ -17,9 +20,16 @@ class RateLimiter:
         self.db_path = db_path
         self._ensure_tables()
 
+    def _get_connection(self) -> sqlite3.Connection:
+        """Get a connection with timeout and WAL mode enabled."""
+        conn = sqlite3.connect(self.db_path, timeout=SQLITE_TIMEOUT)
+        conn.execute("PRAGMA busy_timeout=30000")
+        # WAL mode is enabled by DatabaseManager, skip here to avoid lock
+        return conn
+
     def _ensure_tables(self) -> None:
         """Ensure rate limit tables exist."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS rate_limits (
@@ -93,7 +103,7 @@ class RateLimiter:
         # Count successful requests in window
         window_start = (datetime.utcnow() - timedelta(seconds=period_seconds)).isoformat()
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             count = conn.execute(
                 """
                 SELECT COUNT(*) FROM rate_limit_tracker
@@ -107,7 +117,7 @@ class RateLimiter:
 
         if count >= max_requests:
             # Calculate wait time
-            with sqlite3.connect(self.db_path) as conn:
+            with self._get_connection() as conn:
                 oldest = conn.execute(
                     """
                     SELECT request_timestamp FROM rate_limit_tracker
@@ -168,7 +178,7 @@ class RateLimiter:
             error_message: Error message if failed
             from_cache: Whether response was from cache
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO rate_limit_tracker
@@ -195,7 +205,7 @@ class RateLimiter:
         period_seconds = config["period_seconds"]
         window_start = (datetime.utcnow() - timedelta(seconds=period_seconds)).isoformat()
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             # Count requests in current window
             stats = conn.execute(
                 """
@@ -223,7 +233,7 @@ class RateLimiter:
 
     def _get_config(self, site_name: str) -> Optional[Dict]:
         """Get rate limit config for a site."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT * FROM rate_limits WHERE site_name = ?", (site_name,)

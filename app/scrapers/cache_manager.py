@@ -12,6 +12,9 @@ from .url_normalizer import URLNormalizer
 
 logger = logging.getLogger(__name__)
 
+# SQLite connection timeout (seconds)
+SQLITE_TIMEOUT = 30.0
+
 
 class CacheManager:
     """Manage page cache with TTL and compression."""
@@ -25,9 +28,16 @@ class CacheManager:
         self.db_path = db_path
         self._ensure_tables()
 
+    def _get_connection(self) -> sqlite3.Connection:
+        """Get a connection with timeout and WAL mode enabled."""
+        conn = sqlite3.connect(self.db_path, timeout=SQLITE_TIMEOUT)
+        conn.execute("PRAGMA busy_timeout=30000")
+        # WAL mode is enabled by DatabaseManager, skip here to avoid lock
+        return conn
+
     def _ensure_tables(self) -> None:
         """Ensure cache tables exist."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS cache_entries (
@@ -94,7 +104,7 @@ class CacheManager:
         norm = URLNormalizer.normalize(url, site_name)
         url_hash = norm["url_hash"]
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
 
             row = conn.execute(
@@ -186,7 +196,7 @@ class CacheManager:
         # Content hash for dedup
         content_hash = hashlib.sha256(raw_html.encode("utf-8")).hexdigest()
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             # Check if content exists (dedup)
             existing = conn.execute(
                 "SELECT cache_id FROM scraped_pages_cache WHERE content_hash = ?",
@@ -262,7 +272,7 @@ class CacheManager:
         from datetime import date
         today = date.today().isoformat()
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO cache_stats (stat_date, total_requests, cache_hits, cache_misses)
@@ -278,7 +288,7 @@ class CacheManager:
 
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.row_factory = sqlite3.Row
 
             # Total valid entries
