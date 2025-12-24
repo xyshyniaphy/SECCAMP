@@ -11,8 +11,8 @@ SECCAMP is a batch automation system that searches and analyzes private campsite
 ## Architecture
 
 ### Technology Stack
-- **Container:** Docker 24.0+ with Debian 12 (Bookworm) base
-- **Language:** Python 3.12+
+- **Container:** Docker 24.0+ with multi-stage build (uv for venv)
+- **Language:** Python 3.12+ (uv package manager)
 - **Browser:** Chrome Headless for Selenium web scraping
 - **Database:** SQLite 3.40+ with real-time rate limiting
 - **Static Site Generator:** Hugo Extended 0.120+
