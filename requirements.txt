@@ -1,0 +1,20 @@
+# Core Web Scraping
+selenium==4.16.0
+beautifulsoup4==4.12.2
+lxml==4.9.3
+requests==2.31.0
+
+# Database
+sqlalchemy==2.0.23
+
+# Template & Markdown
+jinja2==3.1.2
+markdown==3.5.1
+pyyaml==6.0.1
+
+# Utilities
+python-dotenv==1.0.0
+tenacity==8.2.3
+
+# Optional
+pandas==2.1.4
