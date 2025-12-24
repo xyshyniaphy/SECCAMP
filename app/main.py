@@ -2,7 +2,8 @@
 import argparse
 import logging
 import sys
-from app.config import Config
+
+from config import Config
 
 
 def setup_logging(config: Config) -> logging.Logger:
