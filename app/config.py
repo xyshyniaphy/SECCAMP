@@ -31,6 +31,7 @@ class Config:
     headless: bool = True
     page_timeout: int = 30
     element_timeout: int = 10
+    max_detail_pages: int = 1  # Debug: limit detail pages to scrape
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -42,6 +43,7 @@ class Config:
             github_user=os.getenv("GITHUB_USER"),
             github_email=os.getenv("GITHUB_EMAIL"),
             hugo_base_url=os.getenv("HUGO_BASE_URL", "https://username.github.io/seccamp/"),
+            max_detail_pages=int(os.getenv("MAX_DETAIL_PAGES", "1")),
         )
 
     def ensure_directories(self) -> None:

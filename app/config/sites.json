@@ -1,0 +1,148 @@
+{
+  "sites": [
+    {
+      "site_name": "athome",
+      "display_name": "アットホーム",
+      "base_url": "https://www.athome.co.jp",
+      "enabled": true,
+      "rate_limit": {
+        "max_requests": 60,
+        "period_seconds": 300,
+        "comment": "60 requests per 5 minutes"
+      },
+      "entry_urls": {
+        "hokkaido": "https://www.athome.co.jp/kodate/chuko/hokkaido/list/?pref=01&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "aomori": "https://www.athome.co.jp/kodate/chuko/aomori/list/?pref=02&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "iwate": "https://www.athome.co.jp/kodate/chuko/iwate/list/?pref=03&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "miyagi": "https://www.athome.co.jp/kodate/chuko/miyagi/list/?pref=04&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "akita": "https://www.athome.co.jp/kodate/chuko/akita/list/?pref=05&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "yamagata": "https://www.athome.co.jp/kodate/chuko/yamagata/list/?pref=06&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "fukushima": "https://www.athome.co.jp/kodate/chuko/fukushima/list/?pref=07&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "ibaraki": "https://www.athome.co.jp/kodate/chuko/ibaraki/list/?pref=08&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "tochigi": "https://www.athome.co.jp/kodate/chuko/tochigi/list/?pref=09&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "gunma": "https://www.athome.co.jp/kodate/chuko/gunma/list/?pref=10&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "saitama": "https://www.athome.co.jp/kodate/chuko/saitama/list/?pref=11&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "chiba": "https://www.athome.co.jp/kodate/chuko/chiba/list/?pref=12&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "tokyo": "https://www.athome.co.jp/kodate/chuko/tokyo/list/?pref=13&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "kanagawa": "https://www.athome.co.jp/kodate/chuko/kanagawa/list/?pref=14&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "niigata": "https://www.athome.co.jp/kodate/chuko/niigata/list/?pref=15&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "yamanashi": "https://www.athome.co.jp/kodate/chuko/yamanashi/list/?pref=19&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "nagano": "https://www.athome.co.jp/kodate/chuko/nagano/list/?pref=20&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30",
+        "shizuoka": "https://www.athome.co.jp/kodate/chuko/shizuoka/list/?pref=22&basic=kb208,kp101,kp001,kt101,kf014,ke001,kn001,kj001&sort=95&limit=30"
+      },
+      "search_params": {
+        "basic": {
+          "kb208": "土地面積1000㎡以上",
+          "kp101": "価格3000万円以下",
+          "kp001": "価格指定なし可",
+          "kt101": "広さ重視",
+          "kf014": "平屋・2階建て",
+          "ke001": "駅徒歩指定なし",
+          "kn001": "築年数指定なし",
+          "kj001": "即入居可"
+        },
+        "sort": "95",
+        "limit": "30"
+      },
+      "selectors": {
+        "list_page": {
+          "property_items": "a[href*='/kodate/']",
+          "property_link": "href",
+          "property_id_pattern": "/kodate/(\\d+)/",
+          "next_page": "a.pagination-next, a[rel='next']",
+          "result_count": "text containing '件中'"
+        },
+        "detail_page": {
+          "property_name": "h1.property-title, h1.bukken-name, h1",
+          "price": "span.price, td:contains('価格') + td",
+          "area": "td:contains('土地面積') + td, td:contains('敷地面積') + td",
+          "location": "span.location, td:contains('所在地') + td",
+          "road_width": "td:contains('接道') + td, td:contains('道路') + td",
+          "building_age": "td:contains('築年') + td",
+          "property_type": "td:contains('種別') + td",
+          "station": "td:contains('交通') + td, td:contains('最寄駅') + td",
+          "description": "div.description, div.comment"
+        }
+      },
+      "pagination": {
+        "type": "page_param",
+        "param_name": "page",
+        "max_pages": 100
+      }
+    },
+    {
+      "site_name": "suumo",
+      "display_name": "SUUMO",
+      "base_url": "https://suumo.jp",
+      "enabled": true,
+      "rate_limit": {
+        "max_requests": 30,
+        "period_seconds": 300
+      },
+      "entry_urls": {
+        "ibaraki": "https://suumo.jp/jj/bukken/ichiran/JJ010FJ001/?ar=030&bs=011&cn=9999999&kb=1&km=1&kt=9999999&mb=0&mt=9999999&sc=08&ta=08&po=25",
+        "tochigi": "https://suumo.jp/jj/bukken/ichiran/JJ010FJ001/?ar=030&bs=011&cn=9999999&kb=1&km=1&kt=9999999&mb=0&mt=9999999&sc=09&ta=09&po=25",
+        "gunma": "https://suumo.jp/jj/bukken/ichiran/JJ010FJ001/?ar=030&bs=011&cn=9999999&kb=1&km=1&kt=9999999&mb=0&mt=9999999&sc=10&ta=10&po=25"
+      },
+      "selectors": {
+        "list_page": {
+          "property_items": "div.property_unit",
+          "property_link": "a.js-cassette_link",
+          "next_page": "a.pagination-next"
+        }
+      }
+    },
+    {
+      "site_name": "ieichiba",
+      "display_name": "家いちば",
+      "base_url": "https://www.ieichiba.com",
+      "enabled": true,
+      "rate_limit": {
+        "max_requests": 20,
+        "period_seconds": 300
+      },
+      "entry_urls": {
+        "all_japan": "https://www.ieichiba.com/search/?q=&area_min=1000"
+      }
+    },
+    {
+      "site_name": "zero_estate",
+      "display_name": "ゼロ円物件",
+      "base_url": "https://zero.estate",
+      "enabled": false,
+      "rate_limit": {
+        "max_requests": 10,
+        "period_seconds": 300
+      },
+      "entry_urls": {
+        "all_japan": "https://zero.estate/properties"
+      },
+      "note": "Disabled - requires manual verification of site structure"
+    },
+    {
+      "site_name": "jmty",
+      "display_name": "ジモティー",
+      "base_url": "https://jmty.jp",
+      "enabled": false,
+      "rate_limit": {
+        "max_requests": 20,
+        "period_seconds": 300
+      },
+      "entry_urls": {
+        "all_japan": "https://jmty.jp/all/sale-buy/buk/toti"
+      },
+      "note": "Requires anti-bot bypass"
+    }
+  ],
+  "global_settings": {
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "page_timeout": 30,
+    "element_timeout": 10,
+    "max_retries": 3,
+    "cache_ttl": {
+      "list_page": 21600,
+      "detail_page": 604800,
+      "image": 2592000
+    }
+  }
+}

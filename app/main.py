@@ -3,9 +3,11 @@ import argparse
 import logging
 import sys
 from datetime import date
+from pathlib import Path
 
 from config import Config
 from database import DatabaseManager
+from scrapers import AthomeScraper
 
 
 def setup_logging(config: Config) -> logging.Logger:
@@ -46,22 +48,70 @@ def run_scrape(config: Config, db_manager: DatabaseManager, logger: logging.Logg
     session = db_manager.get_session()
     batch_date = date.today().isoformat()
 
-    # TODO: Implement actual scraping for each site
-    # This is a minimal placeholder for testing the build
+    # Create scraping log entry
+    log_id = db_manager.create_scraping_log(session, batch_date, "athome")
 
-    # For now, just create a scraping log entry
-    log_id = db_manager.create_scraping_log(session, batch_date, "test")
-    db_manager.update_scraping_log(
-        session,
-        log_id,
-        status="success",
-        properties_found=0,
-        cache_hits=0,
-        cache_misses=0,
-    )
+    try:
+        # Initialize AthomeScraper
+        scraper = AthomeScraper(
+            db_path=config.db_path,
+            max_detail_pages=config.max_detail_pages,
+        )
 
-    logger.info("Scrape mode completed - placeholder (no actual scraping yet)")
-    return 0
+        # Run scraper (returns dict with raw HTML for inspection)
+        logger.info(f"[*] Running AthomeScraper (max_detail_pages={config.max_detail_pages})")
+        result = scraper.scrape()
+
+        # Log results
+        list_html_size = len(result.get("list_html", "") or "")
+        num_urls = len(result.get("property_urls", []))
+        num_details = len(result.get("detail_pages", {}))
+
+        logger.info(f"[*] List page HTML: {list_html_size} bytes")
+        logger.info(f"[*] Property URLs found: {num_urls}")
+        logger.info(f"[*] Detail pages scraped: {num_details}")
+
+        # Save scraped HTML for inspection (debug output directory)
+        debug_dir = config.data_dir / "debug" / batch_date
+        debug_dir.mkdir(parents=True, exist_ok=True)
+
+        if result.get("list_html"):
+            list_file = debug_dir / "athome_list.html"
+            list_file.write_text(result["list_html"], encoding="utf-8")
+            logger.info(f"[*] Saved list HTML: {list_file}")
+
+        for url, html in result.get("detail_pages", {}).items():
+            # Extract property ID from URL for filename
+            import re
+            match = re.search(r"/kodate/(\d+)/", url)
+            prop_id = match.group(1) if match else "unknown"
+            detail_file = debug_dir / f"athome_detail_{prop_id}.html"
+            detail_file.write_text(html, encoding="utf-8")
+            logger.info(f"[*] Saved detail HTML: {detail_file}")
+
+        # Update scraping log
+        db_manager.update_scraping_log(
+            session,
+            log_id,
+            status="success",
+            properties_found=num_urls,
+            cache_hits=scraper.cache_manager.get_stats().get("today_hits", 0),
+            cache_misses=scraper.cache_manager.get_stats().get("today_misses", 0),
+        )
+
+        logger.info("Scrape mode completed successfully")
+        logger.info(f"[*] Inspect saved HTML in: {debug_dir}")
+        return 0
+
+    except Exception as e:
+        logger.error(f"Scraping failed: {e}", exc_info=True)
+        db_manager.update_scraping_log(
+            session,
+            log_id,
+            status="failed",
+            error_messages=str(e),
+        )
+        return 1
 
 
 def run_full(config: Config, db_manager: DatabaseManager, logger: logging.Logger) -> int:
