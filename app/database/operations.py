@@ -294,17 +294,6 @@ class DatabaseManager:
             ))
             total = result.fetchone()[0]
 
-            # Total size
-            result = conn.execute(text(
-                """
-                SELECT COALESCE(SUM(raw_html_size) / 1024.0 / 1024.0, 0)
-                FROM scraped_pages_cache spc
-                JOIN cache_entries ce ON spc.cache_id = ce.cache_id
-                WHERE ce.is_valid = TRUE
-                """
-            ))
-            size = result.fetchone()[0]
-
             # Hit stats today
             today = date.today()
             result = conn.execute(text(
@@ -319,7 +308,6 @@ class DatabaseManager:
 
         return {
             "total_entries": total,
-            "total_size_mb": round(size, 2),
             "today_hits": hits,
         }
 

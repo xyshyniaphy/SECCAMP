@@ -1,9 +1,10 @@
 -- ============================================
 -- SECCAMP PostgreSQL Schema for Neon
 -- Version 6.0 - Neon Migration
+-- Multi-layered cache: DB metadata + local HTML files
 -- ============================================
 
--- Enable UUID extension (optional, for future use)
+-- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================
@@ -49,24 +50,23 @@ CREATE INDEX IF NOT EXISTS idx_tracker_cache
 ON rate_limit_tracker(from_cache, request_timestamp DESC);
 
 -- ============================================
--- 2. CACHING TABLES
+-- 2. MULTI-LAYERED CACHING TABLES
 -- ============================================
 
+-- HTML cache: metadata in DB, content on filesystem (uuid files)
 CREATE TABLE IF NOT EXISTS scraped_pages_cache (
     cache_id BIGSERIAL PRIMARY KEY,
 
-    -- HTTP Response
+    -- HTTP Response metadata
     http_status INTEGER NOT NULL,
     http_headers JSONB,
 
-    -- Content Storage
-    raw_html TEXT,
-    raw_html_size INTEGER,
-    is_compressed BOOLEAN DEFAULT FALSE,
-    parsed_data JSONB,
+    -- File reference (HTML stored locally, not in DB)
+    html_file_uuid TEXT UNIQUE,  -- UUID filename for local HTML file
 
-    -- Content Hash
-    content_hash TEXT NOT NULL,
+    -- Content metadata
+    content_hash TEXT NOT NULL UNIQUE,
+    parsed_data JSONB,
 
     -- Metadata
     scraper_version TEXT DEFAULT '1.0',
@@ -76,11 +76,15 @@ CREATE TABLE IF NOT EXISTS scraped_pages_cache (
     parsing_success BOOLEAN DEFAULT TRUE,
     parsing_error TEXT,
 
+    -- File size tracking (for cleanup)
+    file_size_bytes INTEGER,
+
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_cache_content_hash ON scraped_pages_cache(content_hash);
+CREATE INDEX IF NOT EXISTS idx_cache_file_uuid ON scraped_pages_cache(html_file_uuid);
 CREATE INDEX IF NOT EXISTS idx_cache_scraped_at ON scraped_pages_cache(scraped_at DESC);
 
 CREATE TABLE IF NOT EXISTS cache_entries (
@@ -130,9 +134,10 @@ CREATE TABLE IF NOT EXISTS cache_stats (
     time_saved_seconds REAL DEFAULT 0,
 
     -- Storage
-    total_cache_size_mb REAL DEFAULT 0,
     total_cache_entries INTEGER DEFAULT 0,
+    total_file_size_mb REAL DEFAULT 0,
     entries_cleaned INTEGER DEFAULT 0,
+    files_cleaned INTEGER DEFAULT 0,
 
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -374,8 +379,7 @@ SELECT
     COUNT(*) as total_entries,
     SUM(CASE WHEN ce.is_valid THEN 1 ELSE 0 END) as valid_entries,
     SUM(ce.cache_hits) as total_hits,
-    AVG(spc.raw_html_size) as avg_size_bytes,
-    SUM(CASE WHEN spc.is_compressed THEN 1 ELSE 0 END) as compressed_count
+    COALESCE(SUM(spc.file_size_bytes) / 1024.0 / 1024.0, 0) as total_size_mb
 FROM cache_entries ce
 JOIN scraped_pages_cache spc ON ce.cache_id = spc.cache_id
 GROUP BY ce.source_site, ce.page_type;

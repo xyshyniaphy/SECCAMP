@@ -129,7 +129,11 @@ class BaseScraper(ABC):
         force_refresh: bool = False,
     ) -> Optional[str]:
         """
-        Get page HTML with caching support.
+        Get page HTML with multi-layered caching support.
+
+        Layer 1: Check DB metadata
+        Layer 2: Read HTML from local UUID file (if cache hit)
+        Layer 3: Fetch from web (if cache miss)
 
         Args:
             url: URL to fetch
@@ -139,10 +143,10 @@ class BaseScraper(ABC):
         Returns:
             HTML content or None if failed
         """
-        # Try cache first
+        # Try cache first (DB metadata + local file)
         if not force_refresh:
             cached = self.cache_manager.get_cache(url, self.site_name, page_type)
-            if cached:
+            if cached and cached.get("from_cache") and cached.get("raw_html"):
                 self.rate_limiter.record_request(
                     self.site_name,
                     status="success",
@@ -151,7 +155,7 @@ class BaseScraper(ABC):
                 logger.debug(f"Cache HIT: {url}")
                 return cached["raw_html"]
 
-        # Cache miss - fetch fresh
+        # Cache miss - fetch fresh from web
         self.rate_limiter.wait_if_needed(self.site_name)
 
         start_time = time.time()
@@ -167,7 +171,7 @@ class BaseScraper(ABC):
             html = self.driver.page_source
             duration_ms = int((time.time() - start_time) * 1000)
 
-            # Store in cache
+            # Store in cache (DB metadata + local UUID file)
             self.cache_manager.set_cache(
                 url=url,
                 site_name=self.site_name,
