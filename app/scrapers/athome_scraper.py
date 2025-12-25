@@ -1,7 +1,6 @@
 """Athome.co.jp scraper - scrape only, no parsing (for debugging)."""
 import logging
 import re
-from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import urljoin
 
@@ -26,7 +25,7 @@ class AthomeScraper(BaseScraper):
 
     def __init__(
         self,
-        db_path: Path,
+        database_url: str,
         max_detail_pages: int = 1,
         pref_name: str = DEFAULT_PREF,
     ):
@@ -47,7 +46,7 @@ class AthomeScraper(BaseScraper):
         super().__init__(
             site_name="athome",
             base_url=base_url,
-            db_path=db_path,
+            database_url=database_url,
         )
 
         self.max_detail_pages = max_detail_pages

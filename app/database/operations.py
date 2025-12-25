@@ -1,13 +1,12 @@
-"""Database operations for SECCAMP."""
+"""Database operations for SECCAMP (Neon PostgreSQL)."""
 import logging
-import sqlite3
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, select, update
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool
 
 from .models import Base, Property, AIScore, ScrapingLog, DailyBlog
 
@@ -16,62 +15,63 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
-    """Database manager for SECCAMP."""
+    """Database manager for SECCAMP using Neon PostgreSQL."""
 
     # TTL values for cache
     TTL_LIST_PAGE = 6 * 3600  # 6 hours
     TTL_DETAIL_PAGE = 7 * 86400  # 7 days
     TTL_IMAGE = 30 * 86400  # 30 days
 
-    def __init__(self, db_path: Path):
-        self.db_path = db_path
-        self._enable_wal_mode()  # Enable WAL before creating engine
+    def __init__(self, database_url: str):
+        """
+        Initialize database manager.
+
+        Args:
+            database_url: PostgreSQL connection URL (e.g., from DATABASE_URL env var)
+        """
+        self.database_url = database_url
+
+        # Create engine with NullPool (Neon has built-in pooling)
         self.engine = create_engine(
-            f"sqlite:///{db_path}",
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
+            self.database_url,
+            poolclass=NullPool,
             echo=False,
+            connect_args={
+                "connect_timeout": 10,
+                "options": "-c timezone=utc",
+            },
         )
         self.SessionLocal = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
         self._ensure_initialized()
 
-    def _enable_wal_mode(self) -> None:
-        """Enable WAL mode for better concurrent access."""
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute("PRAGMA busy_timeout=30000")
-                logger.info("WAL mode enabled for database")
-        except sqlite3.OperationalError as e:
-            logger.warning(f"Could not enable WAL mode: {e}")
-
     def _ensure_initialized(self) -> None:
         """Ensure database schema is initialized."""
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-
         # Check if tables exist
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='rate_limits'"
-            )
-            if cursor.fetchone() is None:
-                logger.info(f"Database not initialized, creating schema at {self.db_path}")
+        with self.engine.connect() as conn:
+            result = conn.execute(text(
+                "SELECT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'rate_limits')"
+            ))
+            exists = result.fetchone()[0]
+
+            if not exists:
+                logger.info("Database not initialized, creating schema")
                 self._initialize_from_sql()
 
     def _initialize_from_sql(self) -> None:
         """Initialize database from SQL file."""
         # SQL file is in app/ directory, we're in app/database/
-        sql_file = Path(__file__).parent.parent / "init_database_complete.sql"
+        sql_file = Path(__file__).parent.parent / "init_database_neon.sql"
         if not sql_file.exists():
             logger.warning(f"SQL init file not found at {sql_file}")
             return
 
-        with sqlite3.connect(self.db_path) as conn:
-            with open(sql_file, "r", encoding="utf-8") as f:
-                sql_script = f.read()
-            conn.executescript(sql_script)
+        with open(sql_file, "r", encoding="utf-8") as f:
+            sql_script = f.read()
+
+        with self.engine.connect() as conn:
+            conn.execute(text(sql_script))
             conn.commit()
+
         logger.info("Database initialized from SQL file")
 
     def get_session(self) -> Session:
@@ -89,8 +89,6 @@ class DatabaseManager:
         Returns:
             property_id
         """
-        from sqlalchemy import select
-
         # Check if exists
         stmt = select(Property).where(
             Property.source_site == property_data["source_site"],
@@ -119,8 +117,6 @@ class DatabaseManager:
 
     def get_property_by_source(self, session: Session, source_site: str, source_id: str) -> Optional[Property]:
         """Get property by source site and ID."""
-        from sqlalchemy import select
-
         stmt = select(Property).where(
             Property.source_site == source_site,
             Property.source_property_id == source_id,
@@ -130,8 +126,6 @@ class DatabaseManager:
 
     def get_top_properties(self, session: Session, limit: int = 50) -> List[Property]:
         """Get top properties by score."""
-        from sqlalchemy import select
-
         stmt = (
             select(Property)
             .where(Property.is_active == True)
@@ -142,9 +136,6 @@ class DatabaseManager:
 
     def deactivate_old_properties(self, session: Session, days: int = 30) -> int:
         """Deactivate properties not seen in specified days."""
-        from sqlalchemy import update
-        from datetime import timedelta
-
         cutoff = datetime.utcnow() - timedelta(days=days)
 
         stmt = (
@@ -163,8 +154,6 @@ class DatabaseManager:
 
     def save_ai_score(self, session: Session, property_id: int, score_data: Dict[str, Any]) -> int:
         """Save or update AI score for a property."""
-        from sqlalchemy import select
-
         stmt = select(AIScore).where(AIScore.property_id == property_id)
         existing = session.execute(stmt).scalar_one_or_none()
 
@@ -214,31 +203,22 @@ class DatabaseManager:
         error_messages: Optional[str] = None,
     ) -> None:
         """Update scraping log entry."""
-        from sqlalchemy import update
-
-        stmt = (
-            update(ScrapingLog)
-            .where(ScrapingLog.log_id == log_id)
-            .values(
-                status=status,
-                completed_at=datetime.utcnow(),
-                properties_found=properties_found,
-                properties_new=properties_new,
-                properties_updated=properties_updated,
-                cache_hits=cache_hits,
-                cache_misses=cache_misses,
-                pages_cached=pages_cached,
-                errors_count=errors_count,
-                error_messages=error_messages,
-                execution_time_sec=(datetime.utcnow() - datetime.utcnow()).total_seconds(),  # Will be calculated
-            )
-        )
-        session.execute(stmt)
-
-        # Calculate execution time
         log = session.get(ScrapingLog, log_id)
-        if log and log.completed_at:
-            log.execution_time_sec = (log.completed_at - log.started_at).total_seconds()
+        if log:
+            log.status = status
+            log.completed_at = datetime.utcnow()
+            log.properties_found = properties_found
+            log.properties_new = properties_new
+            log.properties_updated = properties_updated
+            log.cache_hits = cache_hits
+            log.cache_misses = cache_misses
+            log.pages_cached = pages_cached
+            log.errors_count = errors_count
+            log.error_messages = error_messages
+
+            # Calculate execution time
+            if log.completed_at:
+                log.execution_time_sec = (log.completed_at - log.started_at).total_seconds()
 
         session.commit()
 
@@ -276,76 +256,71 @@ class DatabaseManager:
 
     def cleanup_expired_cache(self) -> Dict[str, int]:
         """Clean up expired cache entries."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self.engine.connect() as conn:
             # Mark expired as invalid
-            cursor = conn.execute(
+            result = conn.execute(text(
                 """
                 UPDATE cache_entries
-                SET is_valid = 0
-                WHERE expires_at < datetime('now') AND is_valid = 1
+                SET is_valid = FALSE
+                WHERE expires_at < CURRENT_TIMESTAMP AND is_valid = TRUE
                 """
-            )
-            invalidated = cursor.rowcount
+            ))
+            invalidated = result.rowcount
 
             # Delete orphaned content
-            cursor = conn.execute(
+            result = conn.execute(text(
                 """
                 DELETE FROM scraped_pages_cache
                 WHERE cache_id NOT IN (
                     SELECT DISTINCT cache_id
                     FROM cache_entries
-                    WHERE is_valid = 1 AND cache_id IS NOT NULL
+                    WHERE is_valid = TRUE AND cache_id IS NOT NULL
                 )
                 """
-            )
-            deleted = cursor.rowcount
+            ))
+            deleted = result.rowcount
 
             conn.commit()
-
-            # Vacuum to reclaim space
-            conn.execute("VACUUM")
 
         logger.info(f"Cache cleanup: invalidated={invalidated}, deleted={deleted}")
         return {"invalidated": invalidated, "deleted": deleted}
 
     def get_cache_stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-
+        with self.engine.connect() as conn:
             # Total entries
-            total = conn.execute(
-                "SELECT COUNT(*) FROM cache_entries WHERE is_valid = 1"
-            ).fetchone()[0]
+            result = conn.execute(text(
+                "SELECT COUNT(*) FROM cache_entries WHERE is_valid = TRUE"
+            ))
+            total = result.fetchone()[0]
 
             # Total size
-            size = conn.execute(
+            result = conn.execute(text(
                 """
-                SELECT SUM(raw_html_size) / 1024 / 1024
+                SELECT COALESCE(SUM(raw_html_size) / 1024.0 / 1024.0, 0)
                 FROM scraped_pages_cache spc
                 JOIN cache_entries ce ON spc.cache_id = ce.cache_id
-                WHERE ce.is_valid = 1
+                WHERE ce.is_valid = TRUE
                 """
-            ).fetchone()[0] or 0
+            ))
+            size = result.fetchone()[0]
 
             # Hit stats today
-            from datetime import date
-            today = date.today().isoformat()
-            stats = conn.execute(
-                f"""
-                SELECT
-                    COUNT(*) as total_requests,
-                    SUM(cache_hits) as total_hits
-                FROM cache_entries
-                WHERE DATE(last_accessed_at) = '{today}'
+            today = date.today()
+            result = conn.execute(text(
                 """
-            ).fetchone()
+                SELECT
+                    COALESCE(SUM(cache_hits), 0) as total_hits
+                FROM cache_entries
+                WHERE DATE(last_accessed_at) = :today
+                """
+            ), {"today": today})
+            hits = result.fetchone()[0]
 
         return {
             "total_entries": total,
             "total_size_mb": round(size, 2),
-            "today_requests": stats[0] or 0,
-            "today_hits": stats[1] or 0,
+            "today_hits": hits,
         }
 
     # ============================================
@@ -354,21 +329,22 @@ class DatabaseManager:
 
     def health_check(self) -> Dict[str, Any]:
         """Perform database health check."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        tables = [
+            "rate_limits", "rate_limit_tracker", "cache_entries", "scraped_pages_cache",
+            "cache_stats", "properties", "property_images", "ai_scores", "scraping_logs", "daily_blogs"
+        ]
 
-            # Get table counts
-            tables = [
-                "rate_limits", "rate_limit_tracker", "cache_entries", "scraped_pages_cache",
-                "cache_stats", "properties", "property_images", "ai_scores", "scraping_logs", "daily_blogs"
-            ]
-
-            counts = {}
+        counts = {}
+        with self.engine.connect() as conn:
             for table in tables:
                 try:
-                    count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-                    counts[table] = count
-                except sqlite3.OperationalError:
+                    result = conn.execute(text(f"SELECT COUNT(*) FROM {table}"))
+                    counts[table] = result.fetchone()[0]
+                except Exception:
                     counts[table] = None  # Table doesn't exist
 
-        return {"database": str(self.db_path), "tables": counts}
+        return {
+            "database": "Neon PostgreSQL",
+            "url": self.database_url.split("@")[-1] if "@" in self.database_url else "unknown",
+            "tables": counts
+        }

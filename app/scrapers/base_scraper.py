@@ -1,7 +1,6 @@
-"""Base scraper class for real estate sites."""
+"""Base scraper class for real estate sites (Neon PostgreSQL)."""
 import time
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import List, Dict, Optional, Any
 
 from selenium import webdriver
@@ -26,21 +25,21 @@ class BaseScraper(ABC):
         self,
         site_name: str,
         base_url: str,
-        db_path: Path,
+        database_url: str,
         headless: bool = True,
         page_timeout: int = 30,
     ):
         self.site_name = site_name
         self.base_url = base_url
-        self.db_path = db_path
+        self.database_url = database_url
         self.headless = headless
         self.page_timeout = page_timeout
         self.driver: Optional[webdriver.Chrome] = None
         self.max_retries = 3
 
-        # Initialize cache and rate limiter
-        self.cache_manager = CacheManager(db_path)
-        self.rate_limiter = RateLimiter(db_path)
+        # Initialize cache and rate limiter with database_url
+        self.cache_manager = CacheManager(database_url)
+        self.rate_limiter = RateLimiter(database_url)
 
     def setup_driver(self) -> None:
         """Initialize Chrome WebDriver with appropriate options."""

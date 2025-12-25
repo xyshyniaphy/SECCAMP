@@ -54,7 +54,7 @@ def run_scrape(config: Config, db_manager: DatabaseManager, logger: logging.Logg
     try:
         # Initialize AthomeScraper
         scraper = AthomeScraper(
-            db_path=config.db_path,
+            database_url=config.database_url,
             max_detail_pages=config.max_detail_pages,
         )
 
@@ -115,7 +115,7 @@ def run_scrape(config: Config, db_manager: DatabaseManager, logger: logging.Logg
 
 
 def run_full(config: Config, db_manager: DatabaseManager, logger: logging.Logger) -> int:
-    """Run the full batch: scrape → analyze → generate → build → push."""
+    """Run the full batch: scrape -> analyze -> generate -> build -> push."""
     logger.info("Starting full batch mode")
 
     session = db_manager.get_session()
@@ -168,15 +168,16 @@ def main() -> int:
 
     # Load configuration
     config = Config.from_env()
+    config.validate()
     config.ensure_directories()
 
     # Setup logging
     logger = setup_logging(config)
     logger.info(f"SECCAMP starting in mode: {args.mode}")
-    logger.info(f"Database path: {config.db_path}")
+    logger.info(f"Database: Neon PostgreSQL")
 
     # Initialize database manager
-    db_manager = DatabaseManager(config.db_path)
+    db_manager = DatabaseManager(config.database_url)
 
     # Health check
     health = db_manager.health_check()

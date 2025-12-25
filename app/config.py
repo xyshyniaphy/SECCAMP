@@ -1,17 +1,19 @@
 """Configuration management for SECCAMP."""
 import os
-from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
+from pathlib import Path
 
 
 @dataclass
 class Config:
     """Application configuration."""
 
+    # Neon PostgreSQL Database
+    database_url: Optional[str] = None
+
     # Paths
     data_dir: Path = Path("/data")
-    db_path: Path = Path("/data/seccamp.db")
     log_dir: Path = Path("/data/logs")
     hugo_site_dir: Path = Path("/data/hugo_site")
 
@@ -37,6 +39,7 @@ class Config:
     def from_env(cls) -> "Config":
         """Load configuration from environment variables."""
         return cls(
+            database_url=os.getenv("DATABASE_URL"),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             github_token=os.getenv("GITHUB_TOKEN"),
             github_repo=os.getenv("GITHUB_REPO"),
@@ -48,7 +51,14 @@ class Config:
 
     def ensure_directories(self) -> None:
         """Ensure all required directories exist."""
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.hugo_site_dir.mkdir(parents=True, exist_ok=True)
         (self.hugo_site_dir / "content/posts").mkdir(parents=True, exist_ok=True)
+
+    def validate(self) -> None:
+        """Validate required configuration."""
+        if not self.database_url:
+            raise ValueError(
+                "DATABASE_URL environment variable is required. "
+                "Set it to your Neon PostgreSQL connection string."
+            )

@@ -1,85 +1,94 @@
-"""Rate limiter for web scraping."""
+"""Rate limiter for web scraping (Neon PostgreSQL)."""
 import logging
-import sqlite3
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Dict, Optional
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 
 logger = logging.getLogger(__name__)
 
-# SQLite connection timeout (seconds)
-SQLITE_TIMEOUT = 30.0
-
 
 class RateLimiter:
-    """Rate limiter using SQLite for tracking requests."""
+    """Rate limiter using Neon PostgreSQL for tracking requests."""
 
-    def __init__(self, db_path: Path):
-        self.db_path = db_path
+    def __init__(self, database_url: str):
+        """
+        Initialize rate limiter.
+
+        Args:
+            database_url: PostgreSQL connection URL
+        """
+        self.database_url = database_url
         self._ensure_tables()
 
-    def _get_connection(self) -> sqlite3.Connection:
-        """Get a connection with timeout and WAL mode enabled."""
-        conn = sqlite3.connect(self.db_path, timeout=SQLITE_TIMEOUT)
-        conn.execute("PRAGMA busy_timeout=30000")
-        # WAL mode is enabled by DatabaseManager, skip here to avoid lock
-        return conn
+    def _get_connection(self):
+        """Get PostgreSQL connection."""
+        return psycopg2.connect(self.database_url)
 
     def _ensure_tables(self) -> None:
         """Ensure rate limit tables exist."""
-        with self._get_connection() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS rate_limits (
-                    limit_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    site_name TEXT UNIQUE NOT NULL,
-                    max_requests INTEGER NOT NULL DEFAULT 60,
-                    period_seconds INTEGER NOT NULL DEFAULT 300,
-                    concurrent_limit INTEGER DEFAULT 1,
-                    retry_after_seconds INTEGER DEFAULT 60,
-                    created_at TEXT DEFAULT (datetime('now')),
-                    updated_at TEXT DEFAULT (datetime('now'))
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS rate_limit_tracker (
-                    tracker_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    site_name TEXT NOT NULL,
-                    request_timestamp TEXT NOT NULL,
-                    response_time_ms INTEGER,
-                    status TEXT NOT NULL CHECK(status IN ('success', 'failed', 'timeout')),
-                    error_message TEXT,
-                    from_cache BOOLEAN DEFAULT 0
-                )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_tracker_site_time ON rate_limit_tracker(site_name, request_timestamp DESC)"
-            )
-
-            # Insert default limits if not exist
-            defaults = [
-                ("athome", 60, 300),
-                ("suumo", 30, 300),
-                ("ieichiba", 20, 300),
-                ("zero_estate", 10, 300),
-                ("jmty", 20, 300),
-                ("homes", 30, 300),
-                ("rakuten", 30, 300),
-            ]
-            for site_name, max_requests, period_seconds in defaults:
-                conn.execute(
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cur:
+                # Create rate_limits table
+                cur.execute(
                     """
-                    INSERT OR IGNORE INTO rate_limits (site_name, max_requests, period_seconds)
-                    VALUES (?, ?, ?)
-                    """,
-                    (site_name, max_requests, period_seconds),
+                    CREATE TABLE IF NOT EXISTS rate_limits (
+                        limit_id SERIAL PRIMARY KEY,
+                        site_name TEXT UNIQUE NOT NULL,
+                        max_requests INTEGER NOT NULL DEFAULT 60,
+                        period_seconds INTEGER NOT NULL DEFAULT 300,
+                        concurrent_limit INTEGER DEFAULT 1,
+                        retry_after_seconds INTEGER DEFAULT 60,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
                 )
-            conn.commit()
+                # Create rate_limit_tracker table
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS rate_limit_tracker (
+                        tracker_id BIGSERIAL PRIMARY KEY,
+                        site_name TEXT NOT NULL,
+                        request_timestamp TIMESTAMP NOT NULL,
+                        response_time_ms INTEGER,
+                        status TEXT NOT NULL CHECK(status IN ('success', 'failed', 'timeout')),
+                        error_message TEXT,
+                        from_cache BOOLEAN DEFAULT FALSE
+                    )
+                    """
+                )
+                # Create index
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_tracker_site_time ON rate_limit_tracker(site_name, request_timestamp DESC)"
+                )
+
+                # Insert default limits if not exist
+                defaults = [
+                    ("athome", 60, 300),
+                    ("suumo", 30, 300),
+                    ("ieichiba", 20, 300),
+                    ("zero_estate", 10, 300),
+                    ("jmty", 20, 300),
+                    ("homes", 30, 300),
+                    ("rakuten", 30, 300),
+                ]
+                for site_name, max_requests, period_seconds in defaults:
+                    cur.execute(
+                        """
+                        INSERT INTO rate_limits (site_name, max_requests, period_seconds)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (site_name) DO NOTHING
+                        """,
+                        (site_name, max_requests, period_seconds),
+                    )
+                conn.commit()
+        finally:
+            conn.close()
 
     def can_make_request(self, site_name: str) -> Dict[str, any]:
         """
@@ -101,38 +110,50 @@ class RateLimiter:
         period_seconds = config["period_seconds"]
 
         # Count successful requests in window
-        window_start = (datetime.utcnow() - timedelta(seconds=period_seconds)).isoformat()
+        window_start = datetime.utcnow() - timedelta(seconds=period_seconds)
 
-        with self._get_connection() as conn:
-            count = conn.execute(
-                """
-                SELECT COUNT(*) FROM rate_limit_tracker
-                WHERE site_name = ?
-                  AND request_timestamp >= ?
-                  AND status = 'success'
-                  AND from_cache = 0
-                """,
-                (site_name, window_start),
-            ).fetchone()[0]
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FROM rate_limit_tracker
+                    WHERE site_name = %s
+                      AND request_timestamp >= %s
+                      AND status = 'success'
+                      AND from_cache = FALSE
+                    """,
+                    (site_name, window_start),
+                )
+                count = cur.fetchone()[0]
+
+        finally:
+            conn.close()
 
         if count >= max_requests:
             # Calculate wait time
-            with self._get_connection() as conn:
-                oldest = conn.execute(
-                    """
-                    SELECT request_timestamp FROM rate_limit_tracker
-                    WHERE site_name = ?
-                      AND request_timestamp >= ?
-                      AND status = 'success'
-                      AND from_cache = 0
-                    ORDER BY request_timestamp ASC
-                    LIMIT 1
-                    """,
-                    (site_name, window_start),
-                ).fetchone()
+            conn = self._get_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT request_timestamp FROM rate_limit_tracker
+                        WHERE site_name = %s
+                          AND request_timestamp >= %s
+                          AND status = 'success'
+                          AND from_cache = FALSE
+                        ORDER BY request_timestamp ASC
+                        LIMIT 1
+                        """,
+                        (site_name, window_start),
+                    )
+                    oldest = cur.fetchone()
+
+            finally:
+                conn.close()
 
             if oldest:
-                oldest_time = datetime.fromisoformat(oldest[0])
+                oldest_time = oldest[0]
                 expire_time = oldest_time + timedelta(seconds=period_seconds)
                 wait_seconds = (expire_time - datetime.utcnow()).total_seconds()
                 if wait_seconds > 0:
@@ -178,23 +199,27 @@ class RateLimiter:
             error_message: Error message if failed
             from_cache: Whether response was from cache
         """
-        with self._get_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO rate_limit_tracker
-                (site_name, request_timestamp, response_time_ms, status, error_message, from_cache)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    site_name,
-                    datetime.utcnow().isoformat(),
-                    response_time_ms,
-                    status,
-                    error_message,
-                    from_cache,
-                ),
-            )
-            conn.commit()
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO rate_limit_tracker
+                    (site_name, request_timestamp, response_time_ms, status, error_message, from_cache)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        site_name,
+                        datetime.utcnow(),
+                        response_time_ms,
+                        status,
+                        error_message,
+                        from_cache,
+                    ),
+                )
+                conn.commit()
+        finally:
+            conn.close()
 
     def get_stats(self, site_name: str) -> Dict[str, any]:
         """Get rate limit statistics for a site."""
@@ -203,23 +228,29 @@ class RateLimiter:
             return {}
 
         period_seconds = config["period_seconds"]
-        window_start = (datetime.utcnow() - timedelta(seconds=period_seconds)).isoformat()
+        window_start = datetime.utcnow() - timedelta(seconds=period_seconds)
 
-        with self._get_connection() as conn:
-            # Count requests in current window
-            stats = conn.execute(
-                """
-                SELECT
-                    COUNT(*) FILTER (WHERE status = 'success' AND from_cache = 0) as successful,
-                    COUNT(*) FILTER (WHERE status = 'failed') as failed,
-                    COUNT(*) FILTER (WHERE from_cache = 1) as cached,
-                    AVG(response_time_ms) FILTER (WHERE response_time_ms IS NOT NULL) as avg_response_ms
-                FROM rate_limit_tracker
-                WHERE site_name = ?
-                  AND request_timestamp >= ?
-                """,
-                (site_name, window_start),
-            ).fetchone()
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cur:
+                # Count requests in current window
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*) FILTER (WHERE status = 'success' AND from_cache = FALSE) as successful,
+                        COUNT(*) FILTER (WHERE status = 'failed') as failed,
+                        COUNT(*) FILTER (WHERE from_cache = TRUE) as cached,
+                        AVG(response_time_ms) FILTER (WHERE response_time_ms IS NOT NULL) as avg_response_ms
+                    FROM rate_limit_tracker
+                    WHERE site_name = %s
+                      AND request_timestamp >= %s
+                    """,
+                    (site_name, window_start),
+                )
+                stats = cur.fetchone()
+
+        finally:
+            conn.close()
 
         return {
             "max_requests": config["max_requests"],
@@ -233,9 +264,13 @@ class RateLimiter:
 
     def _get_config(self, site_name: str) -> Optional[Dict]:
         """Get rate limit config for a site."""
-        with self._get_connection() as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT * FROM rate_limits WHERE site_name = ?", (site_name,)
-            ).fetchone()
-            return dict(row) if row else None
+        conn = self._get_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    "SELECT * FROM rate_limits WHERE site_name = %s", (site_name,)
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+        finally:
+            conn.close()
